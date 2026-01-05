@@ -204,8 +204,8 @@ jobs:
         run: |
           echo "setting up port forward to ingress controller..."
 
-          # port forward ingress controller to localhost:80 in background
-          kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 80:80 > /dev/null 2>&1 &
+          # port forward ingress controller to localhost:8080 (port 80 requires root)
+          kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8080:80 &
           PF_PID=$!
           echo $PF_PID > /tmp/ingress-pf.pid
 
@@ -213,14 +213,27 @@ jobs:
           sleep 5
 
           # verify port forward is working
-          for i in {1..10}; do
-            if curl -s -H "Host: foo.localhost" http://localhost/ | grep -q "foo"; then
-              echo "✓ port forward working"
+          SUCCESS=false
+          for i in {1..15}; do
+            if curl -s -H "Host: foo.localhost" http://localhost:8080/ | grep -q "foo"; then
+              echo "✓ port forward working on localhost:8080"
+              SUCCESS=true
               break
             fi
-            echo "waiting for port forward... ($i/10)"
+            echo "waiting for port forward... ($i/15)"
             sleep 2
           done
+
+          if [ "$SUCCESS" = false ]; then
+            echo "❌ port forward failed to start"
+            # check if process is still running
+            if ps -p $PF_PID > /dev/null; then
+              echo "port-forward process is running but not responding"
+            else
+              echo "port-forward process died"
+            fi
+            exit 1
+          fi
 
       - name: run load tests
         id: load-test

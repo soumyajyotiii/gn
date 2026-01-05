@@ -29,8 +29,8 @@ export default function () {
     },
   };
 
-  // sending a get request to localhost with the appropriate host header
-  const response = http.get('http://localhost/', params);
+  // sending a get request to localhost:8080 with the appropriate host header
+  const response = http.get('http://localhost:8080/', params);
 
   // here we are checking if the response is what i expected it to be
   const success = check(response, {

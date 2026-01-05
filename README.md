@@ -169,3 +169,14 @@ heres a breakdown of how long different parts took:
 most of the time was spent debugging the networking issues with port forwarding and figuring out why the ingress wasnt accessible from k6. also spent a good chunk of time getting the prometheus setup right before realizing container metrics arent available without additional cadvisor configuration in kind.
 
 if i did this again knowing what i know now, it would probably take around 3-4 hours since i wouldnt hit all the same issues.
+
+## If i had more time, here are 3 substantial improvements i would consider:
+
+### 1. proper prometheus monitoring with cadvisor integration
+right now prometheus is deployed but cant actually scrape container metrics because cadvisor isnt configured in the kind cluster. with more time i would set up proper metrics collection by either configuring cadvisor in kind or using the kubernetes metrics-server. this would give us real cpu and memory utilization data for the pods during load testing, which would be really valuable for understanding resource consumption and identifying bottlenecks.
+
+### 2. multiple load test scenarios and performance benchmarking
+currently we only run one load test profile (50 vus for 2 minutes). ideally i would implement different load test scenarios like spike tests (sudden traffic bursts), stress tests (gradually increasing load until failure), and soak tests (sustained load over longer periods). also would add baseline performance benchmarking where we compare results against previous runs and fail the ci if performance degrades beyond acceptable thresholds. this would help catch performance regressions early.
+
+### 3. better failure handling and retry mechanisms
+right now if something fails during deployment or health checks, the workflow just exits. with more time i would add smarter retry logic with exponential backoff, better error classification (transient vs permanent failures), and partial rollback capabilities. also would add slack/email notifications for failures and a dashboard showing historical test results and trends. this would make the whole system more production-ready and easier to debug when things go wrong.

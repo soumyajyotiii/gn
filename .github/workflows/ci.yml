@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   load-test:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest  # uses largest available runner for your account
 
     steps:
       - name: checkout code
@@ -58,10 +58,11 @@ jobs:
           # using official nginx ingress for kind
           kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
 
-          # waiting for ingress controller to be ready
+          # waiting for ingress controller deployment to be ready (not admission jobs)
+          echo "waiting for ingress controller deployment..."
           kubectl wait --namespace ingress-nginx \
             --for=condition=ready pod \
-            --selector=app.kubernetes.io/name=ingress-nginx \
+            --selector=app.kubernetes.io/component=controller \
             --timeout=300s
 
           echo "ingress controller status:"

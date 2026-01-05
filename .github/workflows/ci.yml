@@ -96,32 +96,61 @@ jobs:
 
           # checking if deployments are ready
           kubectl get deployments
+          kubectl get ingress
 
-          # testing foo endpoint
+          # give ingress a bit more time to fully configure routes
+          echo "waiting for ingress to fully initialize..."
+          sleep 10
+
+          # testing foo endpoint with better retry logic
           echo "testing foo.localhost..."
-          for i in {1..10}; do
-            RESPONSE=$(curl -s -H "Host: foo.localhost" http://localhost/ || echo "")
-            if echo "$RESPONSE" | grep -q "foo"; then
-              echo "foo endpoint working"
+          SUCCESS=false
+          for i in {1..20}; do
+            RESPONSE=$(curl -s -w "\n%{http_code}" -H "Host: foo.localhost" http://localhost/ || echo "")
+            STATUS=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+
+            if [[ "$STATUS" == "200" ]] && echo "$BODY" | grep -q "foo"; then
+              echo "✓ foo endpoint working (status: $STATUS)"
+              SUCCESS=true
               break
             fi
-            echo "retrying in 3s..."
-            sleep 3
+            echo "attempt $i failed (status: $STATUS), retrying in 5s..."
+            sleep 5
           done
+
+          if [ "$SUCCESS" = false ]; then
+            echo "foo endpoint validation failed"
+            kubectl describe ingress foo-ingress
+            kubectl get pods -o wide
+            exit 1
+          fi
 
           # testing bar endpoint
           echo "testing bar.localhost..."
-          for i in {1..10}; do
-            RESPONSE=$(curl -s -H "Host: bar.localhost" http://localhost/ || echo "")
-            if echo "$RESPONSE" | grep -q "bar"; then
-              echo "bar endpoint working"
+          SUCCESS=false
+          for i in {1..20}; do
+            RESPONSE=$(curl -s -w "\n%{http_code}" -H "Host: bar.localhost" http://localhost/ || echo "")
+            STATUS=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+
+            if [[ "$STATUS" == "200" ]] && echo "$BODY" | grep -q "bar"; then
+              echo "✓ bar endpoint working (status: $STATUS)"
+              SUCCESS=true
               break
             fi
-            echo "retrying in 3s..."
-            sleep 3
+            echo "attempt $i failed (status: $STATUS), retrying in 5s..."
+            sleep 5
           done
 
-          echo "health checks passed"
+          if [ "$SUCCESS" = false ]; then
+            echo "bar endpoint validation failed"
+            kubectl describe ingress bar-ingress
+            kubectl get pods -o wide
+            exit 1
+          fi
+
+          echo "✓ all health checks passed"
 
       - name: run load tests
         id: load-test
@@ -238,10 +267,10 @@ jobs:
           - monitoring: prometheus deployed
 
           <details>
-          <summary>full k6 output</summary>
+          <summary>k6 output summary (last 100 lines)</summary>
 
           \`\`\`
-          $(cat load-test-output.txt)
+          $(tail -100 load-test-output.txt)
           \`\`\`
 
           </details>

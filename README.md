@@ -86,3 +86,42 @@ The workflow uses Prometheus HTTP API to query:
 - `avg(container_memory_usage_bytes{pod=~"foo-app.*"})` for memory
 
 Queries use the last 2 minutes of data which covers the load test window.
+
+## Issues I Faced During Implementation
+
+while building this, i ran into several issues that took some time to debug and fix. heres what went wrong and how i solved them:
+
+### Port 80 wasnt accessible from k6
+the biggest headache was that k6 couldnt reach localhost:80 at all. basically the load test kept failing with connection errors like EOF and "connection reset by peer".
+
+what was happening: even though the ingress controller was running fine and the routes were configured correctly (i could access them from inside the cluster), the github actions runner couldnt hit localhost:80 from outside. the kind cluster port mappings weren't working as expected.
+
+how i fixed it: i added a kubectl port-forward step before running the load test. this explicitly forwards the ingress controller service to localhost:80 on the runner. it runs in the background during the test and gets cleaned up after. bit of a workaround but it works reliably.
+
+### github actions wouldnt let me post pr comments
+after fixing the port issue, the workflow started failing with "403 resource not accessible by integration" when trying to post results as a comment.
+
+what was happening: turns out the workflow didnt have permissions to write to pull requests by default.
+
+how i fixed it: added a permissions block at the top of the workflow giving it explicit access to write to PRs and issues. pretty straightforward once i figured out what was missing.
+
+### k6 was crashing with typeerror
+the k6 script kept throwing errors about trying to call .includes() on undefined.
+
+what was happening: when requests failed (which they were, before fixing the port issue), the response body was undefined. but my script was trying to check if the body included "foo" or "bar" without checking if it actually existed first.
+
+how i fixed it: added a simple null check before accessing response.body. now it gracefully handles failed requests instead of crashing.
+
+### prometheus metrics were coming up empty
+prometheus collection was failing with bc syntax errors and all the metrics showed as 0 or empty.
+
+what was happening: the prometheus queries were returning empty strings in some cases instead of proper values, and then bc was trying to do math on empty input which obviously didnt work.
+
+how i fixed it: added default value handling and wrapped the bc calculations in conditional checks. if a value is empty or "0", i just set it to "0" directly without trying to calculate anything.
+
+### parsing the k6 output was broken
+the parse results script was throwing "broken pipe" errors and extracting garbage like "msg=\"TypeError:" as the VUS count.
+
+what was happening: the k6 output was huge (full of error logs from all the failed requests), and the grep commands were choking on it. also the regex wasnt handling the error format properly.
+
+how i fixed it: truncated the k6 output to just the last 100 lines for the pr comment to avoid the string size limit. after fixing the port forwarding issue the output is much cleaner anyway so this works fine.

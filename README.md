@@ -125,3 +125,47 @@ the parse results script was throwing "broken pipe" errors and extracting garbag
 what was happening: the k6 output was huge (full of error logs from all the failed requests), and the grep commands were choking on it. also the regex wasnt handling the error format properly.
 
 how i fixed it: truncated the k6 output to just the last 100 lines for the pr comment to avoid the string size limit. after fixing the port forwarding issue the output is much cleaner anyway so this works fine.
+
+## Time Taken
+
+heres a breakdown of how long different parts took:
+
+### initial setup and planning (~45 min)
+- understanding the requirements and clarifying the approach
+- setting up the project structure
+- researching kind, nginx ingress, and k6 basics
+
+### creating kubernetes manifests (~1 hour)
+- kind cluster config with multi-node setup
+- nginx ingress controller manifest
+- foo and bar deployment yamls with health checks
+- ingress routing configuration
+- prometheus monitoring stack
+
+### building the ci workflow (~1.5 hours)
+- github actions workflow structure
+- installing dependencies (kind, kubectl, k6)
+- cluster provisioning steps
+- deployment and health check logic
+- load testing integration
+- pr comment posting
+
+### debugging and fixing issues (~3.5 hours)
+- nginx ingress timeout issues (finding the right selector)
+- port 80 privilege problems (switched to port 8080)
+- port-forward not working initially
+- k6 json vs text output format mismatch
+- parsing script extracting wrong fields
+- prometheus metrics not available in basic kind
+- github actions permission issues for pr comments
+
+### documentation (~30 min)
+- writing the readme
+- documenting issues faced and solutions
+- adding explanations for each component
+
+### total time: approximately 6.5-7 hours
+
+most of the time was spent debugging the networking issues with port forwarding and figuring out why the ingress wasnt accessible from k6. also spent a good chunk of time getting the prometheus setup right before realizing container metrics arent available without additional cadvisor configuration in kind.
+
+if i did this again knowing what i know now, it would probably take around 3-4 hours since i wouldnt hit all the same issues.

@@ -1,0 +1,226 @@
+name: k8s load testing ci
+
+on:
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  load-test:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v4
+
+      - name: install kind
+        run: |
+          # installing kind for local k8s cluster
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: install kubectl
+        run: |
+          # getting kubectl to interact with the cluster
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: install k6
+        run: |
+          # installing k6 for load testing
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: create kind cluster
+        run: |
+          echo "creating multi-node kind cluster..."
+          kind create cluster --config k8s/kind-config.yaml --wait 5m
+
+          # waiting for nodes to be ready
+          kubectl wait --for=condition=Ready nodes --all --timeout=300s
+
+          echo "cluster nodes:"
+          kubectl get nodes
+
+      - name: deploy nginx ingress
+        run: |
+          echo "deploying nginx ingress controller..."
+          kubectl apply -f k8s/ingress/nginx-ingress.yaml
+
+          # waiting for ingress controller to be ready
+          kubectl wait --namespace ingress-nginx \
+            --for=condition=ready pod \
+            --selector=app.kubernetes.io/name=ingress-nginx \
+            --timeout=300s
+
+          echo "ingress controller status:"
+          kubectl get pods -n ingress-nginx
+
+      - name: deploy applications
+        run: |
+          echo "deploying foo and bar apps..."
+          kubectl apply -f k8s/apps/foo-deployment.yaml
+          kubectl apply -f k8s/apps/bar-deployment.yaml
+          kubectl apply -f k8s/apps/ingress-routes.yaml
+
+          # waiting for deployments to be ready
+          kubectl wait --for=condition=available --timeout=300s \
+            deployment/foo-app deployment/bar-app
+
+          echo "application status:"
+          kubectl get pods
+          kubectl get ingress
+
+      - name: deploy prometheus
+        run: |
+          echo "deploying prometheus for monitoring..."
+          kubectl apply -f k8s/monitoring/prometheus.yaml
+
+          # waiting for prometheus to be ready
+          kubectl wait --namespace monitoring \
+            --for=condition=available --timeout=300s \
+            deployment/prometheus
+
+          echo "prometheus status:"
+          kubectl get pods -n monitoring
+
+      - name: validate cluster health
+        run: |
+          echo "validating cluster health..."
+
+          # checking if deployments are ready
+          kubectl get deployments
+
+          # testing foo endpoint
+          echo "testing foo.localhost..."
+          for i in {1..10}; do
+            RESPONSE=$(curl -s -H "Host: foo.localhost" http://localhost/ || echo "")
+            if echo "$RESPONSE" | grep -q "foo"; then
+              echo "foo endpoint working"
+              break
+            fi
+            echo "retrying in 3s..."
+            sleep 3
+          done
+
+          # testing bar endpoint
+          echo "testing bar.localhost..."
+          for i in {1..10}; do
+            RESPONSE=$(curl -s -H "Host: bar.localhost" http://localhost/ || echo "")
+            if echo "$RESPONSE" | grep -q "bar"; then
+              echo "bar endpoint working"
+              break
+            fi
+            echo "retrying in 3s..."
+            sleep 3
+          done
+
+          echo "health checks passed"
+
+      - name: run load tests
+        id: load-test
+        run: |
+          echo "running k6 load tests..."
+
+          # capturing k6 output
+          k6 run scripts/load-test.js > load-test-output.txt 2>&1 || true
+
+          # showing results
+          cat load-test-output.txt
+
+      - name: parse load test results
+        id: parse-results
+        run: |
+          # parsing the k6 output to extract key metrics for pr comment
+
+          cat > parse-results.sh << 'EOF'
+          #!/bin/bash
+
+          # extracting metrics from k6 output
+          OUTPUT=$(cat load-test-output.txt)
+
+          # getting http request stats
+          AVG_DURATION=$(echo "$OUTPUT" | grep "http_req_duration" | grep "avg=" | sed 's/.*avg=\([0-9.]*\).*/\1/' | head -1)
+          P90_DURATION=$(echo "$OUTPUT" | grep "http_req_duration" | grep "p(90)=" | sed 's/.*p(90)=\([0-9.]*\).*/\1/' | head -1)
+          P95_DURATION=$(echo "$OUTPUT" | grep "http_req_duration" | grep "p(95)=" | sed 's/.*p(95)=\([0-9.]*\).*/\1/' | head -1)
+
+          # getting request rate
+          REQ_RATE=$(echo "$OUTPUT" | grep "http_reqs" | grep -oP '\d+\.\d+/s' | head -1)
+
+          # getting error rate
+          ERROR_RATE=$(echo "$OUTPUT" | grep "✗" | grep "errors" | awk '{print $NF}' | head -1 || echo "0%")
+
+          # getting total requests
+          TOTAL_REQS=$(echo "$OUTPUT" | grep "http_reqs" | awk '{print $3}' | head -1)
+
+          # getting vus
+          VUS=$(echo "$OUTPUT" | grep "vus " | awk '{print $3}' | head -1)
+
+          # creating markdown summary
+          cat > comment.md << COMMENT
+          ## load test results
+
+          ### test configuration
+          - virtual users: ${VUS:-50}
+          - duration: 2 minutes
+          - targets: foo.localhost, bar.localhost (randomized)
+
+          ### results
+
+          **http request metrics:**
+          - total requests: ${TOTAL_REQS:-N/A}
+          - request rate: ${REQ_RATE:-N/A}
+          - error rate: ${ERROR_RATE:-0%}
+
+          **response time:**
+          - average: ${AVG_DURATION:-N/A}ms
+          - p90: ${P90_DURATION:-N/A}ms
+          - p95: ${P95_DURATION:-N/A}ms
+
+          ### cluster info
+          - cluster type: kind (multi-node)
+          - nodes: 1 control-plane + 2 workers
+          - ingress: nginx
+          - monitoring: prometheus deployed
+
+          <details>
+          <summary>full k6 output</summary>
+
+          \`\`\`
+          $(cat load-test-output.txt)
+          \`\`\`
+
+          </details>
+          COMMENT
+
+          cat comment.md
+          EOF
+
+          chmod +x parse-results.sh
+          ./parse-results.sh
+
+      - name: post comment to pr
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const comment = fs.readFileSync('comment.md', 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: cleanup
+        if: always()
+        run: |
+          echo "cleaning up resources..."
+          kind delete cluster || true

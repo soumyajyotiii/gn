@@ -36,6 +36,9 @@ export default function () {
   const success = check(response, {
     'status is 200': (r) => r.status === 200,
     'response contains expected text': (r) => {
+      // checking if body exists first to avoid errors
+      if (!r.body) return false;
+
       // if i called foo.localhost the response should contain "foo"
       // if i called bar.localhost it should contain "bar"
       if (randomHost === 'foo.localhost') {

@@ -5,6 +5,11 @@ on:
     branches:
       - master
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 jobs:
   load-test:
     runs-on: ubuntu-22.04
@@ -195,6 +200,28 @@ jobs:
 
           echo "✓ all health checks passed"
 
+      - name: setup port forwarding for load test
+        run: |
+          echo "setting up port forward to ingress controller..."
+
+          # port forward ingress controller to localhost:80 in background
+          kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 80:80 > /dev/null 2>&1 &
+          PF_PID=$!
+          echo $PF_PID > /tmp/ingress-pf.pid
+
+          # wait for port forward to be ready
+          sleep 5
+
+          # verify port forward is working
+          for i in {1..10}; do
+            if curl -s -H "Host: foo.localhost" http://localhost/ | grep -q "foo"; then
+              echo "✓ port forward working"
+              break
+            fi
+            echo "waiting for port forward... ($i/10)"
+            sleep 2
+          done
+
       - name: run load tests
         id: load-test
         run: |
@@ -205,6 +232,13 @@ jobs:
 
           # showing results
           cat load-test-output.txt
+
+      - name: stop port forwarding
+        if: always()
+        run: |
+          if [ -f /tmp/ingress-pf.pid ]; then
+            kill $(cat /tmp/ingress-pf.pid) || true
+          fi
 
       - name: collect prometheus metrics
         run: |
@@ -224,13 +258,37 @@ jobs:
           FOO_MEM=$(curl -s 'http://localhost:9090/api/v1/query?query=avg(container_memory_usage_bytes{pod=~"foo-app.*"})' | jq -r '.data.result[0].value[1] // "0"')
           BAR_MEM=$(curl -s 'http://localhost:9090/api/v1/query?query=avg(container_memory_usage_bytes{pod=~"bar-app.*"})' | jq -r '.data.result[0].value[1] // "0"')
 
-          # convert memory to MB
-          FOO_MEM_MB=$(echo "scale=2; $FOO_MEM / 1024 / 1024" | bc)
-          BAR_MEM_MB=$(echo "scale=2; $BAR_MEM / 1024 / 1024" | bc)
+          # set defaults if empty
+          FOO_CPU=${FOO_CPU:-0}
+          BAR_CPU=${BAR_CPU:-0}
+          FOO_MEM=${FOO_MEM:-0}
+          BAR_MEM=${BAR_MEM:-0}
 
-          # convert cpu to percentage
-          FOO_CPU_PCT=$(echo "scale=2; $FOO_CPU * 100" | bc)
-          BAR_CPU_PCT=$(echo "scale=2; $BAR_CPU * 100" | bc)
+          # convert memory to MB (handle empty values)
+          if [ "$FOO_MEM" != "0" ]; then
+            FOO_MEM_MB=$(echo "scale=2; $FOO_MEM / 1024 / 1024" | bc)
+          else
+            FOO_MEM_MB="0"
+          fi
+
+          if [ "$BAR_MEM" != "0" ]; then
+            BAR_MEM_MB=$(echo "scale=2; $BAR_MEM / 1024 / 1024" | bc)
+          else
+            BAR_MEM_MB="0"
+          fi
+
+          # convert cpu to percentage (handle empty values)
+          if [ "$FOO_CPU" != "0" ]; then
+            FOO_CPU_PCT=$(echo "scale=2; $FOO_CPU * 100" | bc)
+          else
+            FOO_CPU_PCT="0"
+          fi
+
+          if [ "$BAR_CPU" != "0" ]; then
+            BAR_CPU_PCT=$(echo "scale=2; $BAR_CPU * 100" | bc)
+          else
+            BAR_CPU_PCT="0"
+          fi
 
           # save metrics to file
           cat > prometheus-metrics.txt << EOF

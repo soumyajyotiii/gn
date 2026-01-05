@@ -133,6 +133,45 @@ jobs:
           # showing results
           cat load-test-output.txt
 
+      - name: collect prometheus metrics
+        run: |
+          echo "collecting resource utilization from prometheus..."
+
+          # port forward to prometheus in background
+          kubectl port-forward -n monitoring svc/prometheus 9090:9090 &
+          PF_PID=$!
+          sleep 5
+
+          # query prometheus for cpu and memory metrics during load test
+          # getting average cpu usage for foo and bar pods
+          FOO_CPU=$(curl -s 'http://localhost:9090/api/v1/query?query=avg(rate(container_cpu_usage_seconds_total{pod=~"foo-app.*"}[2m]))' | jq -r '.data.result[0].value[1] // "0"')
+          BAR_CPU=$(curl -s 'http://localhost:9090/api/v1/query?query=avg(rate(container_cpu_usage_seconds_total{pod=~"bar-app.*"}[2m]))' | jq -r '.data.result[0].value[1] // "0"')
+
+          # getting average memory usage
+          FOO_MEM=$(curl -s 'http://localhost:9090/api/v1/query?query=avg(container_memory_usage_bytes{pod=~"foo-app.*"})' | jq -r '.data.result[0].value[1] // "0"')
+          BAR_MEM=$(curl -s 'http://localhost:9090/api/v1/query?query=avg(container_memory_usage_bytes{pod=~"bar-app.*"})' | jq -r '.data.result[0].value[1] // "0"')
+
+          # convert memory to MB
+          FOO_MEM_MB=$(echo "scale=2; $FOO_MEM / 1024 / 1024" | bc)
+          BAR_MEM_MB=$(echo "scale=2; $BAR_MEM / 1024 / 1024" | bc)
+
+          # convert cpu to percentage
+          FOO_CPU_PCT=$(echo "scale=2; $FOO_CPU * 100" | bc)
+          BAR_CPU_PCT=$(echo "scale=2; $BAR_CPU * 100" | bc)
+
+          # save metrics to file
+          cat > prometheus-metrics.txt << EOF
+          FOO_CPU=$FOO_CPU_PCT
+          BAR_CPU=$BAR_CPU_PCT
+          FOO_MEM=$FOO_MEM_MB
+          BAR_MEM=$BAR_MEM_MB
+          EOF
+
+          cat prometheus-metrics.txt
+
+          # kill port-forward
+          kill $PF_PID || true
+
       - name: parse load test results
         id: parse-results
         run: |
@@ -161,6 +200,9 @@ jobs:
           # getting vus
           VUS=$(echo "$OUTPUT" | grep "vus " | awk '{print $3}' | head -1)
 
+          # loading prometheus metrics
+          source prometheus-metrics.txt 2>/dev/null || true
+
           # creating markdown summary
           cat > comment.md << COMMENT
           ## load test results
@@ -181,6 +223,12 @@ jobs:
           - average: ${AVG_DURATION:-N/A}ms
           - p90: ${P90_DURATION:-N/A}ms
           - p95: ${P95_DURATION:-N/A}ms
+
+          **resource utilization (during load test):**
+          - foo-app cpu: ${FOO_CPU:-N/A}%
+          - foo-app memory: ${FOO_MEM:-N/A} MB
+          - bar-app cpu: ${BAR_CPU:-N/A}%
+          - bar-app memory: ${BAR_MEM:-N/A} MB
 
           ### cluster info
           - cluster type: kind (multi-node)

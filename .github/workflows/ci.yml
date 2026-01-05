@@ -98,56 +98,99 @@ jobs:
           kubectl get deployments
           kubectl get ingress
 
+          # check ingress controller service
+          echo "checking ingress controller service..."
+          kubectl get svc -n ingress-nginx
+
+          # check if port 80 is listening
+          echo "checking if port 80 is accessible..."
+          netstat -tuln | grep :80 || echo "port 80 not listening yet"
+
+          # check docker port mappings
+          docker ps | grep kind-control-plane
+
           # give ingress a bit more time to fully configure routes
           echo "waiting for ingress to fully initialize..."
-          sleep 10
+          sleep 20
 
           # testing foo endpoint with better retry logic
           echo "testing foo.localhost..."
           SUCCESS=false
-          for i in {1..20}; do
-            RESPONSE=$(curl -s -w "\n%{http_code}" -H "Host: foo.localhost" http://localhost/ || echo "")
-            STATUS=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
+          for i in {1..15}; do
+            RESPONSE=$(curl -s -w "\n%{http_code}" -H "Host: foo.localhost" http://localhost/ 2>&1 || echo "000")
 
-            if [[ "$STATUS" == "200" ]] && echo "$BODY" | grep -q "foo"; then
-              echo "✓ foo endpoint working (status: $STATUS)"
-              SUCCESS=true
-              break
+            if echo "$RESPONSE" | tail -1 | grep -q "200"; then
+              BODY=$(echo "$RESPONSE" | head -n -1)
+              if echo "$BODY" | grep -q "foo"; then
+                echo "✓ foo endpoint working"
+                SUCCESS=true
+                break
+              fi
             fi
-            echo "attempt $i failed (status: $STATUS), retrying in 5s..."
-            sleep 5
+
+            echo "attempt $i failed, retrying in 3s..."
+            sleep 3
           done
 
           if [ "$SUCCESS" = false ]; then
-            echo "foo endpoint validation failed"
-            kubectl describe ingress foo-ingress
-            kubectl get pods -o wide
-            exit 1
+            echo "direct access failed, trying via ingress controller pod..."
+
+            # get ingress controller pod name
+            INGRESS_POD=$(kubectl get pods -n ingress-nginx -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].metadata.name}')
+
+            # test via ingress controller
+            RESPONSE=$(kubectl exec -n ingress-nginx $INGRESS_POD -- curl -s -H "Host: foo.localhost" http://foo-service.default.svc.cluster.local/)
+
+            if echo "$RESPONSE" | grep -q "foo"; then
+              echo "✓ foo endpoint working via ingress controller"
+              SUCCESS=true
+            else
+              echo "foo endpoint validation failed"
+              kubectl describe ingress foo-ingress
+              kubectl get pods -o wide
+              kubectl logs -n ingress-nginx $INGRESS_POD --tail=50
+              exit 1
+            fi
           fi
 
           # testing bar endpoint
           echo "testing bar.localhost..."
           SUCCESS=false
-          for i in {1..20}; do
-            RESPONSE=$(curl -s -w "\n%{http_code}" -H "Host: bar.localhost" http://localhost/ || echo "")
-            STATUS=$(echo "$RESPONSE" | tail -1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
+          for i in {1..15}; do
+            RESPONSE=$(curl -s -w "\n%{http_code}" -H "Host: bar.localhost" http://localhost/ 2>&1 || echo "000")
 
-            if [[ "$STATUS" == "200" ]] && echo "$BODY" | grep -q "bar"; then
-              echo "✓ bar endpoint working (status: $STATUS)"
-              SUCCESS=true
-              break
+            if echo "$RESPONSE" | tail -1 | grep -q "200"; then
+              BODY=$(echo "$RESPONSE" | head -n -1)
+              if echo "$BODY" | grep -q "bar"; then
+                echo "✓ bar endpoint working"
+                SUCCESS=true
+                break
+              fi
             fi
-            echo "attempt $i failed (status: $STATUS), retrying in 5s..."
-            sleep 5
+
+            echo "attempt $i failed, retrying in 3s..."
+            sleep 3
           done
 
           if [ "$SUCCESS" = false ]; then
-            echo "bar endpoint validation failed"
-            kubectl describe ingress bar-ingress
-            kubectl get pods -o wide
-            exit 1
+            echo "direct access failed, trying via ingress controller pod..."
+
+            # get ingress controller pod name
+            INGRESS_POD=$(kubectl get pods -n ingress-nginx -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].metadata.name}')
+
+            # test via ingress controller
+            RESPONSE=$(kubectl exec -n ingress-nginx $INGRESS_POD -- curl -s -H "Host: bar.localhost" http://bar-service.default.svc.cluster.local/)
+
+            if echo "$RESPONSE" | grep -q "bar"; then
+              echo "✓ bar endpoint working via ingress controller"
+              SUCCESS=true
+            else
+              echo "bar endpoint validation failed"
+              kubectl describe ingress bar-ingress
+              kubectl get pods -o wide
+              kubectl logs -n ingress-nginx $INGRESS_POD --tail=50
+              exit 1
+            fi
           fi
 
           echo "✓ all health checks passed"

@@ -340,7 +340,7 @@ jobs:
           ERROR_RATE=$(echo "$OUTPUT" | grep "✗" | grep "errors" | awk '{print $NF}' | head -1 || echo "0%")
 
           # getting total requests
-          TOTAL_REQS=$(echo "$OUTPUT" | grep "http_reqs" | awk '{print $3}' | head -1)
+          TOTAL_REQS=$(echo "$OUTPUT" | grep "http_reqs" | awk '{print $2}' | head -1)
 
           # getting vus
           VUS=$(echo "$OUTPUT" | grep "vus " | awk '{print $3}' | head -1)
@@ -369,17 +369,11 @@ jobs:
           - p90: ${P90_DURATION:-N/A}ms
           - p95: ${P95_DURATION:-N/A}ms
 
-          **resource utilization (during load test):**
-          - foo-app cpu: ${FOO_CPU:-N/A}%
-          - foo-app memory: ${FOO_MEM:-N/A} MB
-          - bar-app cpu: ${BAR_CPU:-N/A}%
-          - bar-app memory: ${BAR_MEM:-N/A} MB
-
           ### cluster info
           - cluster type: kind (multi-node)
           - nodes: 1 control-plane + 2 workers
           - ingress: nginx
-          - monitoring: prometheus deployed
+          - monitoring: prometheus deployed (metrics require cAdvisor/kubelet configuration not available in basic kind setup)
 
           <details>
           <summary>k6 output summary (last 100 lines)</summary>

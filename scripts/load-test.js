@@ -55,12 +55,3 @@ export default function () {
   // here im adding a random sleep between 0.5 and 2 seconds to give a sense of actual user behavoir where there are pauses between requests
   sleep(Math.random() * 1.5 + 0.5);
 }
-
-// this function formats the output as json so its easier to parse in the ci pipeline
-export function handleSummary(data) {
-  const summary = {
-    'stdout': JSON.stringify(data, null, 2),
-  };
-
-  return summary;
-}

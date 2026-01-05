@@ -29,13 +29,16 @@ export default function () {
     },
   };
 
-  // sending a get request to localhost with the appropriate host header
-  const response = http.get('http://localhost/', params);
+  // sending a get request to localhost:8080 with the appropriate host header
+  const response = http.get('http://localhost:8080/', params);
 
   // here we are checking if the response is what i expected it to be
   const success = check(response, {
     'status is 200': (r) => r.status === 200,
     'response contains expected text': (r) => {
+      // checking if body exists first to avoid errors
+      if (!r.body) return false;
+
       // if i called foo.localhost the response should contain "foo"
       // if i called bar.localhost it should contain "bar"
       if (randomHost === 'foo.localhost') {
@@ -51,13 +54,4 @@ export default function () {
 
   // here im adding a random sleep between 0.5 and 2 seconds to give a sense of actual user behavoir where there are pauses between requests
   sleep(Math.random() * 1.5 + 0.5);
-}
-
-// this function formats the output as json so its easier to parse in the ci pipeline
-export function handleSummary(data) {
-  const summary = {
-    'stdout': JSON.stringify(data, null, 2),
-  };
-
-  return summary;
 }
